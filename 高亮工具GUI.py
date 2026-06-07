@@ -252,6 +252,9 @@ class WordHighlighterApp(ctk.CTk):
         ctk.set_appearance_mode("System")
         ctk.set_default_color_theme("blue")
 
+        # 帮助窗口引用
+        self.help_window = None
+
         # 颜色映射字典
         self.color_map = {
             "黄色 (Yellow)": WD_COLOR_INDEX.YELLOW,
@@ -278,6 +281,20 @@ class WordHighlighterApp(ctk.CTk):
         )
         self.title_label.grid(row=0, column=0, sticky="w")
         
+        # 使用说明按钮
+        self.help_button = ctk.CTkButton(
+            self.header_frame,
+            text="❓ 使用说明",
+            width=90,
+            height=28,
+            fg_color="transparent",
+            text_color=("#1f77b4", "#52a3db"),
+            hover_color=("#e6f2fc", "#2a3c4d"),
+            command=self.open_help_window,
+            font=ctk.CTkFont(family="Microsoft YaHei", size=12, weight="bold")
+        )
+        self.help_button.grid(row=0, column=1, padx=(10, 20), sticky="e")
+        
         # 主题切换开关
         self.theme_switch = ctk.CTkSwitch(
             self.header_frame, 
@@ -285,7 +302,7 @@ class WordHighlighterApp(ctk.CTk):
             command=self.toggle_theme,
             font=ctk.CTkFont(family="Microsoft YaHei", size=12)
         )
-        self.theme_switch.grid(row=0, column=1, sticky="e")
+        self.theme_switch.grid(row=0, column=2, sticky="e")
         if ctk.get_appearance_mode() == "Dark":
             self.theme_switch.select()
 
@@ -440,6 +457,83 @@ class WordHighlighterApp(ctk.CTk):
             ctk.set_appearance_mode("Dark")
         else:
             ctk.set_appearance_mode("Light")
+
+    def open_help_window(self):
+        """打开/显示使用说明弹窗 (单例模式)"""
+        if hasattr(self, "help_window") and self.help_window is not None and self.help_window.winfo_exists():
+            self.help_window.deiconify()
+            self.help_window.focus()
+            return
+
+        self.help_window = ctk.CTkToplevel(self)
+        self.help_window.title("使用说明与步骤")
+        self.help_window.geometry("620x420")
+        self.help_window.resizable(False, False)
+        
+        self.help_window.update_idletasks()
+        width = 620
+        height = 420
+        x = self.winfo_x() + (self.winfo_width() // 2) - (width // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (height // 2)
+        self.help_window.geometry(f"{width}x{height}+{x}+{y}")
+        
+        self.help_window.transient(self)
+        self.help_window.grab_set()
+
+        self.help_window.grid_columnconfigure(0, weight=1)
+        self.help_window.grid_rowconfigure(0, weight=1)
+
+        content_frame = ctk.CTkFrame(self.help_window, corner_radius=12, border_width=1)
+        content_frame.grid(row=0, column=0, padx=15, pady=15, sticky="nsew")
+        content_frame.grid_columnconfigure(0, weight=1)
+
+        help_title = ctk.CTkLabel(
+            content_frame, 
+            text="📖 Word 关键词高亮工具使用说明", 
+            font=ctk.CTkFont(family="Microsoft YaHei", size=16, weight="bold")
+        )
+        help_title.grid(row=0, column=0, padx=15, pady=(15, 10), sticky="w")
+
+        help_text_box = ctk.CTkTextbox(
+            content_frame,
+            font=ctk.CTkFont(family="Microsoft YaHei", size=12),
+            wrap="word",
+            fg_color="transparent",
+            activate_scrollbars=True
+        )
+        help_text_box.grid(row=1, column=0, padx=15, pady=5, sticky="nsew")
+        content_frame.grid_rowconfigure(1, weight=1)
+
+        help_content = (
+            "程序启动时，会在程序所在路径下自动创建一个【关键词配置】文件夹，"
+            "并在该文件夹下生成以下三个 .txt 规则文件。你只需在相应的文件中填入关键词即可：\n\n"
+            "1. 💡 高亮关键词.txt (包含匹配/模糊匹配)\n"
+            "   - 用于放置需要高亮的关键词。如果是中文，则进行包含匹配；如果是英文单词，则会匹配包含它的内容（不限制边界）。\n\n"
+            "2. 🎯 特殊关键词.txt (绝对/全词匹配)\n"
+            "   - 用于进行绝对/全词匹配。例如，希望仅在英文单词独立出现时高亮（如只匹配 apple 而不匹配 apples），请将其放入此文件。\n\n"
+            "3. 🚫 排除关键词.txt (排除标记)\n"
+            "   - 用于防止误标记。例如，希望高亮 AI，但当出现 AI Agent 时不希望高亮其中的 AI。此时可以在 排除关键词.txt 中填入 AI Agent。\n"
+        )
+        
+        help_text_box.insert("1.0", help_content)
+        help_text_box.configure(state="disabled")
+
+        warning_label = ctk.CTkLabel(
+            content_frame,
+            text="⚠️ 注意：每个文本文件中一行只能放置一个关键词！",
+            text_color=("#d9534f", "#ff4d4d"),
+            font=ctk.CTkFont(family="Microsoft YaHei", size=13, weight="bold")
+        )
+        warning_label.grid(row=2, column=0, padx=15, pady=(10, 5), sticky="w")
+
+        close_btn = ctk.CTkButton(
+            content_frame,
+            text="我知道了",
+            width=100,
+            command=self.help_window.destroy,
+            font=ctk.CTkFont(family="Microsoft YaHei", size=12, weight="bold")
+        )
+        close_btn.grid(row=3, column=0, padx=15, pady=(5, 15))
 
     def select_docx_file(self):
         """选择 Word 文档并更新 Entry"""
