@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller packages and folders
+build/
+dist/
+*.spec
+
+# Log files
+*.log
+highlight_gui.log
+highlight_script.log
+
+# ZIP files or local backups
+*.zip
+*备份.py
+
+# Word document templates or local test docx files
+*.docx
+
+# Local keywords configuration files (these are auto-created at startup)
+关键词配置/*.txt
+排除关键词.txt
+特殊关键词.txt
+高亮关键词.txt
