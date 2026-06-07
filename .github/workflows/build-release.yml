@@ -1,0 +1,143 @@
+name: Build and Release Multi-Platform Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows App
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install customtkinter python-docx regex pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --windowed --onefile --name="Word高亮工具_Windows" 高亮工具GUI.py
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Word高亮工具_Windows
+          path: dist/Word高亮工具_Windows.exe
+
+  build-mac-intel:
+    name: Build macOS Intel App
+    runs-on: macos-13
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install customtkinter python-docx regex pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --windowed --onefile --name="Word高亮工具_macOS_Intel" 高亮工具GUI.py
+
+      - name: Zip App Bundle
+        run: |
+          cd dist
+          zip -r ../Word高亮工具_macOS_Intel.zip Word高亮工具_macOS_Intel.app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Word高亮工具_macOS_Intel
+          path: Word高亮工具_macOS_Intel.zip
+
+  build-mac-m-series:
+    name: Build macOS M-Series App
+    runs-on: macos-14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install customtkinter python-docx regex pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --windowed --onefile --name="Word高亮工具_macOS_M_Series" 高亮工具GUI.py
+
+      - name: Zip App Bundle
+        run: |
+          cd dist
+          zip -r ../Word高亮工具_macOS_M_Series.zip Word高亮工具_macOS_M_Series.app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Word高亮工具_macOS_M_Series
+          path: Word高亮工具_macOS_M_Series.zip
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-windows, build-mac-intel, build-mac-m-series]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Windows Build
+        uses: actions/download-artifact@v4
+        with:
+          name: Word高亮工具_Windows
+          path: ./dist-release
+
+      - name: Download macOS Intel Build
+        uses: actions/download-artifact@v4
+        with:
+          name: Word高亮工具_macOS_Intel
+          path: ./dist-release
+
+      - name: Download macOS M-Series Build
+        uses: actions/download-artifact@v4
+        with:
+          name: Word高亮工具_macOS_M_Series
+          path: ./dist-release
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ./dist-release/Word高亮工具_Windows.exe
+            ./dist-release/Word高亮工具_macOS_Intel.zip
+            ./dist-release/Word高亮工具_macOS_M_Series.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
