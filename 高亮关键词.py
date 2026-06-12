@@ -6,7 +6,9 @@ import os
 import regex as re # 使用更强大的 regex 库
 import logging
 import sys
+import zipfile
 from copy import deepcopy
+from docx.opc.exceptions import PackageNotFoundError
 from docx.text.run import Run
 
 # --- 日志配置 ---
@@ -81,6 +83,29 @@ def load_keywords(filepath):
     except Exception as e:
         logger.error(f"加载关键词文件 {filepath} 时出错: {e}")
         return []
+
+def get_docx_validation_error(filepath):
+    """返回 Word 文档校验错误；有效时返回 None。"""
+    if not os.path.exists(filepath):
+        return f"找不到指定的 Word 文件：{filepath}"
+
+    try:
+        if os.path.getsize(filepath) == 0:
+            return f"该 Word 文件大小为 0 字节，无法读取：{filepath}"
+
+        if not zipfile.is_zipfile(filepath):
+            return f"该文件不是有效的 .docx 文件，请选择真正的 Word 文档：{filepath}"
+
+        with zipfile.ZipFile(filepath) as zf:
+            names = set(zf.namelist())
+            if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+                return f"该文件不是标准 Word .docx 文档，无法处理：{filepath}"
+    except OSError as e:
+        return f"无法读取该 Word 文件：{filepath} ({e})"
+    except zipfile.BadZipFile:
+        return f"该文件损坏或不是有效的 .docx 文件：{filepath}"
+
+    return None
 
 def append_cloned_run(paragraph, source_run, text=None, highlight_color=None):
     """克隆原始 run 的完整 XML 格式，只替换文本并按需设置高亮。"""
@@ -274,9 +299,18 @@ def highlight_keywords_in_doc(doc_path, highlight_keywords, exact_keywords, excl
     """在 Word 文档（包括正文和表格）中高亮关键词"""
     logger.info(f"\n开始处理 Word 文档: {doc_path}")
     logger.info(f"大小写匹配模式: {'区分大小写' if case_sensitive else '不区分大小写'}")
+
+    docx_error = get_docx_validation_error(doc_path)
+    if docx_error:
+        logger.error(f"错误: {docx_error}")
+        return
+
     try:
         document = docx.Document(doc_path)
         logger.info("Word 文档加载成功。")
+    except (PackageNotFoundError, zipfile.BadZipFile):
+        logger.error(f"错误: Word 文档无效或已损坏，无法读取: {doc_path}")
+        return
     except Exception as e:
         logger.error(f"错误: 无法加载 Word 文档 {doc_path}: {e}")
         return

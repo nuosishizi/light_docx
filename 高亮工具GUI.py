@@ -7,9 +7,11 @@ import regex as re
 import logging
 import sys
 import threading
+import zipfile
 from copy import deepcopy
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+from docx.opc.exceptions import PackageNotFoundError
 from docx.text.run import Run
 
 # --- 日志配置 ---
@@ -68,6 +70,29 @@ def load_keywords(filepath):
     except Exception as e:
         logger.error(f"加载关键词文件 {os.path.basename(filepath)} 时出错: {e}")
         return []
+
+def get_docx_validation_error(filepath):
+    """返回 Word 文档校验错误；有效时返回 None。"""
+    if not os.path.exists(filepath):
+        return f"找不到指定的 Word 文件：\n{filepath}"
+
+    try:
+        if os.path.getsize(filepath) == 0:
+            return f"该 Word 文件大小为 0 字节，无法读取：\n{filepath}"
+
+        if not zipfile.is_zipfile(filepath):
+            return f"该文件不是有效的 .docx 文件，请选择真正的 Word 文档：\n{filepath}"
+
+        with zipfile.ZipFile(filepath) as zf:
+            names = set(zf.namelist())
+            if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+                return f"该文件不是标准 Word .docx 文档，无法处理：\n{filepath}"
+    except OSError as e:
+        return f"无法读取该 Word 文件：\n{filepath}\n\n{e}"
+    except zipfile.BadZipFile:
+        return f"该文件损坏或不是有效的 .docx 文件：\n{filepath}"
+
+    return None
 
 def append_cloned_run(paragraph, source_run, text=None, highlight_color=None):
     """克隆原始 run 的完整 XML 格式，只替换文本并按需设置高亮。"""
@@ -629,8 +654,10 @@ class WordHighlighterApp(ctk.CTk):
         if not doc_path:
             messagebox.showerror("参数缺失", "请先选择需要高亮的 Word 文档！")
             return
-        if not os.path.exists(doc_path):
-            messagebox.showerror("文件不存在", f"找不到指定的 Word 文件：\n{doc_path}")
+
+        docx_error = get_docx_validation_error(doc_path)
+        if docx_error:
+            messagebox.showerror("Word 文档无效", docx_error)
             return
 
         if not folder_path:
@@ -687,6 +714,12 @@ class WordHighlighterApp(ctk.CTk):
 
             logger.info("--- 开启关键词高亮任务 ---")
             logger.info(f"大小写匹配模式: {'区分大小写' if case_sensitive else '不区分大小写'}")
+
+            docx_error = get_docx_validation_error(doc_path)
+            if docx_error:
+                logger.error(docx_error)
+                self.after(0, lambda: self.on_task_finished(False, docx_error))
+                return
             
             # 1. 加载关键词
             logger.info("正在加载关键词文本...")
@@ -746,6 +779,10 @@ class WordHighlighterApp(ctk.CTk):
 
         except PermissionError:
             err_msg = f"保存文档失败！输出文件 '{os.path.basename(output_path)}' 可能已被其他程序（如Word）打开，请先关闭该文件并重试。"
+            logger.error(f"错误: {err_msg}")
+            self.after(0, lambda: self.on_task_finished(False, err_msg))
+        except (PackageNotFoundError, zipfile.BadZipFile):
+            err_msg = f"Word 文档无效或已损坏，无法读取：\n{doc_path}\n\n请确认选择的是原始 .docx 文件，而不是 0 字节文件或未生成成功的输出文件。"
             logger.error(f"错误: {err_msg}")
             self.after(0, lambda: self.on_task_finished(False, err_msg))
         except Exception as e:
