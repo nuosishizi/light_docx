@@ -29,7 +29,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --windowed --onefile --name="Word高亮工具_Windows" 高亮工具GUI.py
+          pyinstaller --clean --windowed --onefile --collect-data customtkinter --name="Word高亮工具_Windows" 高亮工具GUI.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -56,7 +56,7 @@ jobs:
 
       - name: Build with PyInstaller (Intel)
         run: |
-          pyinstaller --windowed --onefile --target-arch=x86_64 --name="Word高亮工具_macOS_Intel" 高亮工具GUI.py
+          pyinstaller --clean --windowed --onefile --collect-data customtkinter --target-arch=x86_64 --name="Word高亮工具_macOS_Intel" 高亮工具GUI.py
 
       - name: Zip App Bundle
         run: |
@@ -88,7 +88,7 @@ jobs:
 
       - name: Build with PyInstaller (Apple Silicon)
         run: |
-          pyinstaller --windowed --onefile --target-arch=arm64 --name="Word高亮工具_macOS_AppleSilicon" 高亮工具GUI.py
+          pyinstaller --clean --windowed --onefile --collect-data customtkinter --target-arch=arm64 --name="Word高亮工具_macOS_AppleSilicon" 高亮工具GUI.py
 
       - name: Zip App Bundle
         run: |

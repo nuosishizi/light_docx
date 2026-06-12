@@ -42,6 +42,8 @@
    ```
    如果窗口成功弹出，且能正常选择文档、读取关键词和运行高亮逻辑，说明环境一切正常！
 
+> 打包后的 macOS 应用首次启动时，会把默认关键词配置和日志文件放在 `~/Documents/Word高亮工具/` 下，避免写入 `.app` 程序包内部导致启动失败。
+
 ---
 
 ## 第三步：使用 PyInstaller 进行打包
@@ -56,6 +58,11 @@ pyinstaller --windowed --onefile --target-arch=x86_64 --name="Word高亮工具_m
 ### Apple Silicon / M 系列芯片 Mac：
 ```bash
 pyinstaller --windowed --onefile --target-arch=arm64 --name="Word高亮工具_macOS_AppleSilicon" 高亮工具GUI.py
+```
+
+如果界面库资源没有被自动打包，可在命令中加入：
+```bash
+--collect-data customtkinter
 ```
 
 ### 选项参数解析：

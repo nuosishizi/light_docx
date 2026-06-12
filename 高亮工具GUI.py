@@ -7,12 +7,60 @@ import regex as re
 import logging
 import sys
 import threading
+import tempfile
 import zipfile
 from copy import deepcopy
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from docx.opc.exceptions import PackageNotFoundError
 from docx.text.run import Run
+
+APP_NAME = "Word高亮工具"
+
+def get_app_dir():
+    """获取程序运行时的根目录，兼容 PyInstaller 打包后的路径"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+def ensure_writable_dir(path):
+    """创建并确认目录可写。"""
+    os.makedirs(path, exist_ok=True)
+    probe_path = os.path.join(path, ".write_test")
+    with open(probe_path, "w", encoding="utf-8") as f:
+        f.write("")
+    os.remove(probe_path)
+    return path
+
+def get_user_data_dir():
+    """获取日志和默认关键词配置使用的可写目录。"""
+    if not getattr(sys, 'frozen', False):
+        return get_app_dir()
+
+    candidates = []
+    if sys.platform == "darwin":
+        candidates.extend([
+            os.path.join(os.path.expanduser("~/Documents"), APP_NAME),
+            os.path.join(os.path.expanduser("~/Library/Application Support"), APP_NAME),
+        ])
+    else:
+        candidates.extend([
+            get_app_dir(),
+            os.path.join(os.path.expanduser("~/Documents"), APP_NAME),
+        ])
+
+    candidates.append(os.path.join(tempfile.gettempdir(), APP_NAME))
+
+    for candidate in candidates:
+        try:
+            return ensure_writable_dir(candidate)
+        except Exception:
+            continue
+
+    return tempfile.gettempdir()
+
+def get_log_file_path():
+    return os.path.join(get_user_data_dir(), "highlight_gui.log")
 
 # --- 日志配置 ---
 # 创建一个基础的 Logger
@@ -21,19 +69,21 @@ logger.setLevel(logging.INFO)
 
 # 默认控制台和文件日志
 log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-log_file_handler = logging.FileHandler('highlight_gui.log', 'w', encoding='utf-8')
+log_file_handler = logging.FileHandler(get_log_file_path(), 'w', encoding='utf-8')
 log_file_handler.setFormatter(log_formatter)
 logger.addHandler(log_file_handler)
 
-def get_app_dir():
-    """获取程序运行时的根目录，兼容 PyInstaller 打包后的路径"""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+def log_uncaught_exception(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    logger.critical("程序发生未捕获异常", exc_info=(exc_type, exc_value, exc_traceback))
+
+sys.excepthook = log_uncaught_exception
 
 def ensure_default_keywords_files():
     """自动创建默认关键词文件夹及空的关键词文本文件"""
-    app_dir = get_app_dir()
+    app_dir = get_user_data_dir()
     default_dir = os.path.join(app_dir, "关键词配置")
     if not os.path.exists(default_dir):
         try:
@@ -803,13 +853,31 @@ class WordHighlighterApp(ctk.CTk):
             messagebox.showerror("运行出错", result_msg)
 
 
-if __name__ == "__main__":
+def main():
     # 启用 DPI 缩放（在高分屏/视网膜屏上防止界面模糊）
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-        
+
+    logger.info(f"程序启动，日志文件: {get_log_file_path()}")
+    logger.info(f"默认数据目录: {get_user_data_dir()}")
+
     app = WordHighlighterApp()
     app.mainloop()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logger.critical("程序启动失败", exc_info=True)
+        try:
+            messagebox.showerror(
+                "启动失败",
+                f"程序启动失败：{e}\n\n请查看日志文件：\n{get_log_file_path()}"
+            )
+        except Exception:
+            pass
+        sys.exit(1)
