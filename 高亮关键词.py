@@ -6,6 +6,8 @@ import os
 import regex as re # 使用更强大的 regex 库
 import logging
 import sys
+from copy import deepcopy
+from docx.text.run import Run
 
 # --- 日志配置 ---
 log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -30,6 +32,7 @@ EXACT_KEYWORDS_PATH = os.path.join('关键词配置', '特殊关键词.txt')    
 EXCLUDE_KEYWORDS_PATH = os.path.join('关键词配置', '排除关键词.txt')      # 规则 2: 排除匹配
 OUTPUT_DOCUMENT_PATH = r'C:\Users\newnew\Desktop\高亮标记\标记高亮_00【底稿】《卷七 关于追求真理》最新定稿_20251228.docx' # 输出文件名
 HIGHLIGHT_COLOR = WD_COLOR_INDEX.YELLOW       # 高亮颜色
+CASE_SENSITIVE_MATCH = False                  # True=区分大小写；False=不区分大小写
 # --- 配置结束 ---
 
 
@@ -79,22 +82,66 @@ def load_keywords(filepath):
         logger.error(f"加载关键词文件 {filepath} 时出错: {e}")
         return []
 
-def copy_run_format(source_run, target_run):
-    """复制 run 的格式，包括字体、字号、颜色、粗体、斜体、以及原有的高亮颜色。"""
-    target_run.bold = source_run.bold
-    target_run.italic = source_run.italic
-    target_run.underline = source_run.underline
-    target_run.font.name = source_run.font.name
-    target_run.style.name = source_run.style.name
-    if source_run.font.size:
-        target_run.font.size = source_run.font.size
-    if source_run.font.color.rgb:
-        target_run.font.color.rgb = source_run.font.color.rgb
-    # --- 【代码修复】 ---
-    # 复制原始 run 的高亮颜色，以保留原有的背景色
-    if source_run.font.highlight_color:
-        target_run.font.highlight_color = source_run.font.highlight_color
-    # --- 【修复结束】 ---
+def append_cloned_run(paragraph, source_run, text=None, highlight_color=None):
+    """克隆原始 run 的完整 XML 格式，只替换文本并按需设置高亮。"""
+    new_r = deepcopy(source_run._r)
+    new_run = Run(new_r, paragraph)
+    if text is not None:
+        new_run.text = text
+    paragraph._p.append(new_r)
+    if highlight_color is not None:
+        new_run.font.highlight_color = highlight_color
+    return new_run
+
+def rebuild_paragraph_with_highlights(paragraph, original_runs, merged_spans, highlight_color):
+    """按高亮区间重建段落，同时完整保留每个原始 run 的格式。"""
+    paragraph.clear()
+
+    char_pos = 0
+    span_index = 0
+
+    for source_run in original_runs:
+        run_text = source_run.text
+        run_len = len(run_text)
+
+        if run_len == 0:
+            append_cloned_run(paragraph, source_run)
+            continue
+
+        run_end = char_pos + run_len
+        offset = 0
+
+        while offset < run_len:
+            abs_pos = char_pos + offset
+
+            while span_index < len(merged_spans) and merged_spans[span_index][1] <= abs_pos:
+                span_index += 1
+
+            is_highlight = (
+                span_index < len(merged_spans)
+                and merged_spans[span_index][0] <= abs_pos < merged_spans[span_index][1]
+            )
+
+            if is_highlight:
+                next_abs = min(run_end, merged_spans[span_index][1])
+            else:
+                next_abs = run_end
+                if span_index < len(merged_spans):
+                    next_abs = min(next_abs, merged_spans[span_index][0])
+
+            if next_abs <= abs_pos:
+                next_abs = abs_pos + 1
+
+            part = run_text[offset:offset + (next_abs - abs_pos)]
+            append_cloned_run(
+                paragraph,
+                source_run,
+                part,
+                highlight_color if is_highlight else None
+            )
+            offset += next_abs - abs_pos
+
+        char_pos = run_end
 
 
 def has_cjk(text):
@@ -133,7 +180,7 @@ def create_pattern_for_keyword(kw, match_type):
 
 # --- 核心处理逻辑 ---
 
-def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keywords, exclude_keywords, highlight_color):
+def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keywords, exclude_keywords, highlight_color, case_sensitive=False):
     """
     处理单个段落的核心逻辑。
     """
@@ -142,6 +189,7 @@ def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keyword
 
     paragraph_text = paragraph.text
     logger.debug(f"\n== 处理段落 (首50字符): {paragraph_text[:50].replace(chr(10), ' ')} ==")
+    regex_flags = 0 if case_sensitive else re.IGNORECASE
 
     # 步骤 1: 查找所有可能的匹配位置 (spans)
     potential_spans = []
@@ -150,8 +198,8 @@ def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keyword
     for kw in highlight_keywords:
         try:
             pattern = create_pattern_for_keyword(kw, 'highlight')
-            # 使用 finditer 查找所有不区分大小写的匹配项
-            for match in re.finditer(pattern, paragraph_text, re.IGNORECASE):
+            # 使用 finditer 按当前大小写设置查找所有匹配项
+            for match in re.finditer(pattern, paragraph_text, regex_flags):
                 start, end = match.span()
                 potential_spans.append((start, end, kw))
                 logger.debug(f"  找到[高亮]匹配: '{paragraph_text[start:end]}' (规则: '{kw}') at [{start}:{end}]")
@@ -162,7 +210,7 @@ def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keyword
     for kw in exact_keywords:
         try:
             pattern = create_pattern_for_keyword(kw, 'exact')
-            for match in re.finditer(pattern, paragraph_text, re.IGNORECASE):
+            for match in re.finditer(pattern, paragraph_text, regex_flags):
                 potential_spans.append((match.start(), match.end(), kw))
                 logger.debug(f"  找到[特殊]匹配: '{match.group(0)}' (规则: '{kw}') at [{match.start()}:{match.end()}]")
         except re.error as e:
@@ -177,7 +225,7 @@ def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keyword
     for kw in exclude_keywords:
         try:
             pattern = create_pattern_for_keyword(kw, 'exclude')
-            for match in re.finditer(pattern, paragraph_text, re.IGNORECASE):
+            for match in re.finditer(pattern, paragraph_text, regex_flags):
                 exclude_spans.append((match.start(), match.end(), kw))
                 logger.debug(f"  发现[排除]区域: '{match.group(0)}' at [{match.start()}:{match.end()}]")
         except re.error as e:
@@ -217,67 +265,15 @@ def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keyword
     logger.info(f"  段落处理完成，最终确定 {len(merged_spans)} 个高亮区域。")
     logger.debug(f"  最终高亮区域: {merged_spans}")
 
-    # 步骤 5: 重建段落 (此部分逻辑无需修改，它依赖于正确的spans)
     original_runs = list(paragraph.runs)
-    paragraph.clear()
-
-    last_pos = 0 
-    
-    # 辅助函数，用于从原始runs中提取文本并添加到新段落
-    def add_text_from_runs(start_char, end_char, is_highlight):
-        text_len_to_add = end_char - start_char
-        if text_len_to_add <= 0: return
-
-        # 定位起始 run
-        char_cursor = 0
-        run_index = 0
-        
-        # 找到包含 start_char 的 run
-        for i, run in enumerate(original_runs):
-            run_len = len(run.text)
-            if char_cursor + run_len > start_char:
-                run_index = i
-                break
-            char_cursor += run_len
-        
-        # 从定位到的 run 开始添加文本
-        offset_in_run = start_char - char_cursor
-
-        while text_len_to_add > 0 and run_index < len(original_runs):
-            run = original_runs[run_index]
-            text_from_run = run.text[offset_in_run:]
-            
-            part_to_add = text_from_run
-            if len(part_to_add) > text_len_to_add:
-                part_to_add = part_to_add[:text_len_to_add]
-            
-            if part_to_add:
-                new_run = paragraph.add_run(part_to_add)
-                copy_run_format(run, new_run)
-                if is_highlight:
-                    new_run.font.highlight_color = highlight_color
-            
-            text_len_to_add -= len(part_to_add)
-            
-            # 移动到下一个 run
-            run_index += 1
-            offset_in_run = 0 # 新的run从头开始
-    
-    for h_start, h_end in merged_spans:
-        # 添加非高亮部分
-        add_text_from_runs(last_pos, h_start, is_highlight=False)
-        # 添加高亮部分
-        add_text_from_runs(h_start, h_end, is_highlight=True)
-        last_pos = h_end
-
-    # 添加最后剩余的非高亮部分
-    add_text_from_runs(last_pos, len(paragraph_text), is_highlight=False)
+    rebuild_paragraph_with_highlights(paragraph, original_runs, merged_spans, highlight_color)
 
 
 # --- 主处理函数 ---
-def highlight_keywords_in_doc(doc_path, highlight_keywords, exact_keywords, exclude_keywords, output_path, highlight_color):
+def highlight_keywords_in_doc(doc_path, highlight_keywords, exact_keywords, exclude_keywords, output_path, highlight_color, case_sensitive=False):
     """在 Word 文档（包括正文和表格）中高亮关键词"""
     logger.info(f"\n开始处理 Word 文档: {doc_path}")
+    logger.info(f"大小写匹配模式: {'区分大小写' if case_sensitive else '不区分大小写'}")
     try:
         document = docx.Document(doc_path)
         logger.info("Word 文档加载成功。")
@@ -290,7 +286,7 @@ def highlight_keywords_in_doc(doc_path, highlight_keywords, exact_keywords, excl
     total_paras = len(document.paragraphs)
     for i, p in enumerate(document.paragraphs):
         logger.info(f"处理主段落 {i + 1}/{total_paras}")
-        process_and_highlight_paragraph(p, highlight_keywords, exact_keywords, exclude_keywords, highlight_color)
+        process_and_highlight_paragraph(p, highlight_keywords, exact_keywords, exclude_keywords, highlight_color, case_sensitive)
     logger.info("--- 主文档段落处理完成 ---")
 
     # --- 处理表格中的段落 ---
@@ -302,7 +298,7 @@ def highlight_keywords_in_doc(doc_path, highlight_keywords, exact_keywords, excl
             for row in table.rows:
                 for cell in row.cells:
                     for p_in_cell in cell.paragraphs:
-                        process_and_highlight_paragraph(p_in_cell, highlight_keywords, exact_keywords, exclude_keywords, highlight_color)
+                        process_and_highlight_paragraph(p_in_cell, highlight_keywords, exact_keywords, exclude_keywords, highlight_color, case_sensitive)
     else:
         logger.info("  文档中未发现表格。")
     logger.info("--- 表格内容处理完成 ---")
@@ -341,7 +337,8 @@ if __name__ == "__main__":
                 exact_keywords,
                 exclude_keywords,
                 OUTPUT_DOCUMENT_PATH,
-                HIGHLIGHT_COLOR
+                HIGHLIGHT_COLOR,
+                CASE_SENSITIVE_MATCH
             )
 
     logger.info("--- 脚本执行结束 ---")

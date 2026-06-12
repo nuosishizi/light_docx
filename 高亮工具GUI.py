@@ -7,8 +7,10 @@ import regex as re
 import logging
 import sys
 import threading
+from copy import deepcopy
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+from docx.text.run import Run
 
 # --- 日志配置 ---
 # 创建一个基础的 Logger
@@ -67,19 +69,66 @@ def load_keywords(filepath):
         logger.error(f"加载关键词文件 {os.path.basename(filepath)} 时出错: {e}")
         return []
 
-def copy_run_format(source_run, target_run):
-    """复制 run 的格式，包括字体、字号、颜色、粗体、斜体、以及原有的高亮颜色。"""
-    target_run.bold = source_run.bold
-    target_run.italic = source_run.italic
-    target_run.underline = source_run.underline
-    target_run.font.name = source_run.font.name
-    target_run.style.name = source_run.style.name
-    if source_run.font.size:
-        target_run.font.size = source_run.font.size
-    if source_run.font.color.rgb:
-        target_run.font.color.rgb = source_run.font.color.rgb
-    if source_run.font.highlight_color:
-        target_run.font.highlight_color = source_run.font.highlight_color
+def append_cloned_run(paragraph, source_run, text=None, highlight_color=None):
+    """克隆原始 run 的完整 XML 格式，只替换文本并按需设置高亮。"""
+    new_r = deepcopy(source_run._r)
+    new_run = Run(new_r, paragraph)
+    if text is not None:
+        new_run.text = text
+    paragraph._p.append(new_r)
+    if highlight_color is not None:
+        new_run.font.highlight_color = highlight_color
+    return new_run
+
+def rebuild_paragraph_with_highlights(paragraph, original_runs, merged_spans, highlight_color):
+    """按高亮区间重建段落，同时完整保留每个原始 run 的格式。"""
+    paragraph.clear()
+
+    char_pos = 0
+    span_index = 0
+
+    for source_run in original_runs:
+        run_text = source_run.text
+        run_len = len(run_text)
+
+        if run_len == 0:
+            append_cloned_run(paragraph, source_run)
+            continue
+
+        run_end = char_pos + run_len
+        offset = 0
+
+        while offset < run_len:
+            abs_pos = char_pos + offset
+
+            while span_index < len(merged_spans) and merged_spans[span_index][1] <= abs_pos:
+                span_index += 1
+
+            is_highlight = (
+                span_index < len(merged_spans)
+                and merged_spans[span_index][0] <= abs_pos < merged_spans[span_index][1]
+            )
+
+            if is_highlight:
+                next_abs = min(run_end, merged_spans[span_index][1])
+            else:
+                next_abs = run_end
+                if span_index < len(merged_spans):
+                    next_abs = min(next_abs, merged_spans[span_index][0])
+
+            if next_abs <= abs_pos:
+                next_abs = abs_pos + 1
+
+            part = run_text[offset:offset + (next_abs - abs_pos)]
+            append_cloned_run(
+                paragraph,
+                source_run,
+                part,
+                highlight_color if is_highlight else None
+            )
+            offset += next_abs - abs_pos
+
+        char_pos = run_end
 
 def has_cjk(text):
     """检查字符串是否包含中日韩字符。"""
@@ -103,19 +152,20 @@ def create_pattern_for_keyword(kw, match_type):
     
     return escaped_kw
 
-def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keywords, exclude_keywords, highlight_color):
+def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keywords, exclude_keywords, highlight_color, case_sensitive=False):
     """处理单个段落的核心逻辑。"""
     if not paragraph.text.strip():
         return
 
     paragraph_text = paragraph.text
     potential_spans = []
+    regex_flags = 0 if case_sensitive else re.IGNORECASE
 
     # 1a: 处理 "高亮关键词.txt" (包含匹配)
     for kw in highlight_keywords:
         try:
             pattern = create_pattern_for_keyword(kw, 'highlight')
-            for match in re.finditer(pattern, paragraph_text, re.IGNORECASE):
+            for match in re.finditer(pattern, paragraph_text, regex_flags):
                 start, end = match.span()
                 potential_spans.append((start, end, kw))
         except re.error as e:
@@ -125,7 +175,7 @@ def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keyword
     for kw in exact_keywords:
         try:
             pattern = create_pattern_for_keyword(kw, 'exact')
-            for match in re.finditer(pattern, paragraph_text, re.IGNORECASE):
+            for match in re.finditer(pattern, paragraph_text, regex_flags):
                 potential_spans.append((match.start(), match.end(), kw))
         except re.error as e:
             logger.error(f"  正则表达式错误 (特殊)，关键词: '{kw}', 错误: {e}")
@@ -138,7 +188,7 @@ def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keyword
     for kw in exclude_keywords:
         try:
             pattern = create_pattern_for_keyword(kw, 'exclude')
-            for match in re.finditer(pattern, paragraph_text, re.IGNORECASE):
+            for match in re.finditer(pattern, paragraph_text, regex_flags):
                 exclude_spans.append((match.start(), match.end(), kw))
         except re.error as e:
             logger.error(f"  正则表达式错误 (排除)，关键词: '{kw}', 错误: {e}")
@@ -169,51 +219,8 @@ def process_and_highlight_paragraph(paragraph, highlight_keywords, exact_keyword
             current_start, current_end = next_start, next_end
     merged_spans.append((current_start, current_end))
 
-    # 步骤 5: 重建段落
     original_runs = list(paragraph.runs)
-    paragraph.clear()
-    last_pos = 0 
-    
-    def add_text_from_runs(start_char, end_char, is_highlight):
-        text_len_to_add = end_char - start_char
-        if text_len_to_add <= 0: return
-
-        char_cursor = 0
-        run_index = 0
-        
-        for i, run in enumerate(original_runs):
-            run_len = len(run.text)
-            if char_cursor + run_len > start_char:
-                run_index = i
-                break
-            char_cursor += run_len
-        
-        offset_in_run = start_char - char_cursor
-
-        while text_len_to_add > 0 and run_index < len(original_runs):
-            run = original_runs[run_index]
-            text_from_run = run.text[offset_in_run:]
-            
-            part_to_add = text_from_run
-            if len(part_to_add) > text_len_to_add:
-                part_to_add = part_to_add[:text_len_to_add]
-            
-            if part_to_add:
-                new_run = paragraph.add_run(part_to_add)
-                copy_run_format(run, new_run)
-                if is_highlight:
-                    new_run.font.highlight_color = highlight_color
-            
-            text_len_to_add -= len(part_to_add)
-            run_index += 1
-            offset_in_run = 0
-    
-    for h_start, h_end in merged_spans:
-        add_text_from_runs(last_pos, h_start, is_highlight=False)
-        add_text_from_runs(h_start, h_end, is_highlight=True)
-        last_pos = h_end
-
-    add_text_from_runs(last_pos, len(paragraph_text), is_highlight=False)
+    rebuild_paragraph_with_highlights(paragraph, original_runs, merged_spans, highlight_color)
 
 
 # --- GUI 桥接日志 Handler ---
@@ -391,6 +398,29 @@ class WordHighlighterApp(ctk.CTk):
         )
         self.info_label.grid(row=2, column=1, columnspan=2, padx=(180, 15), pady=(10, 15), sticky="e")
 
+        # 2d. 大小写匹配开关
+        self.case_label = ctk.CTkLabel(
+            self.config_frame,
+            text="大小写匹配:",
+            font=ctk.CTkFont(family="Microsoft YaHei", size=13, weight="bold")
+        )
+        self.case_label.grid(row=3, column=0, padx=(15, 10), pady=(0, 15), sticky="w")
+
+        self.case_switch = ctk.CTkSwitch(
+            self.config_frame,
+            text="区分大小写",
+            font=ctk.CTkFont(family="Microsoft YaHei", size=12)
+        )
+        self.case_switch.grid(row=3, column=1, padx=10, pady=(0, 15), sticky="w")
+
+        self.case_hint_label = ctk.CTkLabel(
+            self.config_frame,
+            text="关闭时不区分大小写（默认）",
+            text_color="gray",
+            font=ctk.CTkFont(family="Microsoft YaHei", size=11)
+        )
+        self.case_hint_label.grid(row=3, column=1, columnspan=2, padx=(130, 15), pady=(0, 15), sticky="e")
+
         # --- 3. 进度条与控制区 ---
         self.control_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.control_frame.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
@@ -513,6 +543,8 @@ class WordHighlighterApp(ctk.CTk):
             "   - 用于进行绝对/全词匹配。例如，希望仅在英文单词独立出现时高亮（如只匹配 apple 而不匹配 apples），请将其放入此文件。\n\n"
             "3. 🚫 排除关键词.txt (排除标记)\n"
             "   - 用于防止误标记。例如，希望高亮 AI，但当出现 AI Agent 时不希望高亮其中的 AI。此时可以在 排除关键词.txt 中填入 AI Agent。\n"
+            "\n4. 🔠 大小写匹配\n"
+            "   - 默认关闭：不区分大小写；开启后：只匹配大小写完全一致的内容。\n"
         )
         
         help_text_box.insert("1.0", help_content)
@@ -577,6 +609,7 @@ class WordHighlighterApp(ctk.CTk):
         self.doc_button.configure(state=state)
         self.folder_button.configure(state=state)
         self.color_menu.configure(state=state)
+        self.case_switch.configure(state=state)
         self.run_button.configure(state=state)
         self.theme_switch.configure(state=state)
 
@@ -591,6 +624,7 @@ class WordHighlighterApp(ctk.CTk):
         doc_path = self.doc_entry.get().strip()
         folder_path = self.folder_entry.get().strip()
         selected_color_name = self.color_menu.get()
+        case_sensitive = self.case_switch.get() == 1
 
         if not doc_path:
             messagebox.showerror("参数缺失", "请先选择需要高亮的 Word 文档！")
@@ -633,12 +667,12 @@ class WordHighlighterApp(ctk.CTk):
         # 开启后台工作线程
         worker = threading.Thread(
             target=self.run_highlighting_task,
-            args=(doc_path, folder_path, highlight_color)
+            args=(doc_path, folder_path, highlight_color, case_sensitive)
         )
         worker.daemon = True
         worker.start()
 
-    def run_highlighting_task(self, doc_path, folder_path, highlight_color):
+    def run_highlighting_task(self, doc_path, folder_path, highlight_color, case_sensitive):
         """在后台线程中执行高亮处理逻辑"""
         try:
             # 构造输入文件路径
@@ -652,6 +686,7 @@ class WordHighlighterApp(ctk.CTk):
             output_path = os.path.join(dir_name, f"{base_name}高亮{ext}")
 
             logger.info("--- 开启关键词高亮任务 ---")
+            logger.info(f"大小写匹配模式: {'区分大小写' if case_sensitive else '不区分大小写'}")
             
             # 1. 加载关键词
             logger.info("正在加载关键词文本...")
@@ -683,7 +718,7 @@ class WordHighlighterApp(ctk.CTk):
             logger.info("开始高亮主文档段落...")
             for i, p in enumerate(document.paragraphs):
                 process_and_highlight_paragraph(
-                    p, highlight_keywords, exact_keywords, exclude_keywords, highlight_color
+                    p, highlight_keywords, exact_keywords, exclude_keywords, highlight_color, case_sensitive
                 )
                 current_step += 1
                 if current_step % 10 == 0 or current_step == total_steps:
@@ -696,7 +731,7 @@ class WordHighlighterApp(ctk.CTk):
                     for cell in row.cells:
                         for p_in_cell in cell.paragraphs:
                             process_and_highlight_paragraph(
-                                p_in_cell, highlight_keywords, exact_keywords, exclude_keywords, highlight_color
+                                p_in_cell, highlight_keywords, exact_keywords, exclude_keywords, highlight_color, case_sensitive
                             )
                 current_step += 1
                 self.safe_update_progress(current_step, total_steps, f"正在处理表格 {table_idx+1}/{total_tables}")

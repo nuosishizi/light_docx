@@ -48,19 +48,26 @@
 
 在终端处于代码目录的前提下，执行以下打包命令：
 
+### Intel 芯片 Mac：
 ```bash
-pyinstaller --windowed --onefile --name="Word高亮工具" 高亮工具GUI.py
+pyinstaller --windowed --onefile --target-arch=x86_64 --name="Word高亮工具_macOS_Intel" 高亮工具GUI.py
+```
+
+### Apple Silicon / M 系列芯片 Mac：
+```bash
+pyinstaller --windowed --onefile --target-arch=arm64 --name="Word高亮工具_macOS_AppleSilicon" 高亮工具GUI.py
 ```
 
 ### 选项参数解析：
 * `--windowed` (或 `-w`)：指定其为窗口图形程序，双击运行时**不会**弹出一个黑色的命令行黑框。
 * `--onefile` (或 `-F`)：将所有的 Python 代码、依赖库、图片图标等全部打包进一个单独的 `.app` 应用程序包中。
-* `--name="Word高亮工具"`：指定最终生成的 Mac 应用程序名称。
+* `--target-arch`：指定 macOS 应用的芯片架构，Intel 使用 `x86_64`，M 系列使用 `arm64`。
+* `--name="Word高亮工具_..."`：指定最终生成的 Mac 应用程序名称。
 
 ### 打包结果：
 * 编译过程大约需要 1-3 分钟。
 * 编译完成后，你会看到当前目录下多出了几个文件夹。
-* **最终生成的 Mac 软件存放在 `dist/` 文件夹中**，名为 **`Word高亮工具.app`**。你可以直接把这个文件拖拽到 Mac 的“应用程序”（Applications）中，或发送给其他 Mac 用户。
+* **最终生成的 Mac 软件存放在 `dist/` 文件夹中**，名为 **`Word高亮工具_macOS_Intel.app`** 或 **`Word高亮工具_macOS_AppleSilicon.app`**。你可以直接把对应版本拖拽到 Mac 的“应用程序”（Applications）中，或发送给其他 Mac 用户。
 
 ---
 

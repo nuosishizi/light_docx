@@ -37,9 +37,9 @@ jobs:
           name: Word高亮工具_Windows
           path: dist/Word高亮工具_Windows.exe
 
-  build-macos-universal:
-    name: Build macOS Universal App
-    runs-on: macos-14
+  build-macos-intel:
+    name: Build macOS Intel App
+    runs-on: macos-15-intel
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -52,27 +52,58 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install customtkinter python-docx pyinstaller
-          ARCHFLAGS="-arch x86_64 -arch arm64" pip install --no-binary :all: regex
+          pip install customtkinter python-docx regex pyinstaller
 
-      - name: Build with PyInstaller (Universal2)
+      - name: Build with PyInstaller (Intel)
         run: |
-          pyinstaller --windowed --onefile --target-arch=universal2 --name="Word高亮工具_macOS_Universal" 高亮工具GUI.py
+          pyinstaller --windowed --onefile --target-arch=x86_64 --name="Word高亮工具_macOS_Intel" 高亮工具GUI.py
 
       - name: Zip App Bundle
         run: |
           cd dist
-          zip -r ../Word高亮工具_macOS_Universal.zip Word高亮工具_macOS_Universal.app
+          zip -r ../Word高亮工具_macOS_Intel.zip Word高亮工具_macOS_Intel.app
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Word高亮工具_macOS_Universal
-          path: Word高亮工具_macOS_Universal.zip
+          name: Word高亮工具_macOS_Intel
+          path: Word高亮工具_macOS_Intel.zip
+
+  build-macos-apple-silicon:
+    name: Build macOS Apple Silicon App
+    runs-on: macos-15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install customtkinter python-docx regex pyinstaller
+
+      - name: Build with PyInstaller (Apple Silicon)
+        run: |
+          pyinstaller --windowed --onefile --target-arch=arm64 --name="Word高亮工具_macOS_AppleSilicon" 高亮工具GUI.py
+
+      - name: Zip App Bundle
+        run: |
+          cd dist
+          zip -r ../Word高亮工具_macOS_AppleSilicon.zip Word高亮工具_macOS_AppleSilicon.app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Word高亮工具_macOS_AppleSilicon
+          path: Word高亮工具_macOS_AppleSilicon.zip
 
   create-release:
     name: Create GitHub Release
-    needs: [build-windows, build-macos-universal]
+    needs: [build-windows, build-macos-intel, build-macos-apple-silicon]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -85,10 +116,16 @@ jobs:
           name: Word高亮工具_Windows
           path: ./dist-release
 
-      - name: Download macOS Universal Build
+      - name: Download macOS Intel Build
         uses: actions/download-artifact@v4
         with:
-          name: Word高亮工具_macOS_Universal
+          name: Word高亮工具_macOS_Intel
+          path: ./dist-release
+
+      - name: Download macOS Apple Silicon Build
+        uses: actions/download-artifact@v4
+        with:
+          name: Word高亮工具_macOS_AppleSilicon
           path: ./dist-release
 
       - name: Create Release
@@ -96,7 +133,8 @@ jobs:
         with:
           files: |
             ./dist-release/Word高亮工具_Windows.exe
-            ./dist-release/Word高亮工具_macOS_Universal.zip
+            ./dist-release/Word高亮工具_macOS_Intel.zip
+            ./dist-release/Word高亮工具_macOS_AppleSilicon.zip
           draft: false
           prerelease: false
           generate_release_notes: true
